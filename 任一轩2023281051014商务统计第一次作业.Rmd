@@ -1,0 +1,222 @@
+---
+title: "关于二手房的数据分析研究"
+author:
+  - 任一轩
+date: "`r Sys.Date()`"  
+  
+documentclass: ctexart
+keywords:
+  - 中文
+  - R Markdown
+output:
+  rticles::ctex:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+---
+
+
+```{r setup, include = FALSE,echo = FALSE}
+knitr::opts_chunk$set(echo = FALSE,error = FALSE, warning = FALSE, message = FALSE, out.width = "100%", split = FALSE, fig.align = "center")
+#load library
+library(tidyverse)
+library(kableExtra)
+library(lubridate)
+library(scales)
+library(plotly)
+library(patchwork)
+library(ggrepel)
+library(readr)
+library(dplyr)
+library(nnet)
+library(rpart)
+library(ggplot2)
+library(Hmisc)
+library(car)
+library(caret)
+library(showtext)
+showtext_auto(enable = TRUE)
+```
+
+
+
+# 主要发现
+
+1.  房屋所在地段是影响房屋单价的主要因素
+2.  四居室、五居室房屋单价较高
+3.  邻近地铁的房屋单价会略高于不邻近地铁的房屋
+
+# 数据介绍
+
+本报告**链家**数据获取方式如下：
+
+报告人在2023年9月12日获取了[链家武汉二手房网站](https://wh.lianjia.com/ershoufang/)数据。
+
+-   链家二手房网站默认显示100页，每页30套房产，因此本数据包括3000套房产信息；
+
+-   数据包括了页面可见部分的文本信息，具体字段及说明见作业说明。
+
+**说明：**数据仅用于教学；由于不清楚链家数据的展示规则，因此数据可能并不是武汉二手房市场的随机抽样，结论很可能有很大的偏差，甚至可能是错误的。
+
+```{r}
+# 载入数据和预处理
+
+lj<- read_csv("C:/data/2023-09-12_cleaned.csv")
+lj
+
+
+```
+
+# 数据概览
+
+数据表（lj)共包括`r names(lj)`等`r ncol(lj)`个变量,共`r nrow(lj)`行。表的前10行示例如下：
+
+```{r}
+lj %>% 
+  head(10) 
+```
+
+各变量的简短信息：
+
+```{r}
+glimpse(lj)
+```
+
+各变量的简短统计：
+
+```{r}
+summary(lj)
+```
+
+可以看到：
+
+-   表中房屋售价总价的最大值为1380万元，而最小值仅为10.6万元，相差极大，最大值为最小值的100倍以上。
+-   表中房屋单价最大值为44656元/㎡，最小值为1771元/㎡，最大值为最小值的25倍左右。
+-   表中房屋建筑面积最大值为588㎡，最小值为23㎡，中位数和平均数接近，约100㎡。
+
+# 探索性分析
+
+## 查看数据集户型和建筑面积的分布
+
+```{r}
+type_freq <- data.frame(table(lj$bedrooms))
+type_p <- ggplot(data=type_freq,aes(x=reorder(Var1,-Freq),y=Freq))+
+  geom_bar(stat='identity',fill='steelblue')+
+  theme(axis.text.x = element_text(angle = 30,vjust = 0.5))+
+  xlab('卧室数量')+
+  ylab('房屋套数')
+type_p
+
+```
+发现：
+
+1.三居室和二居室是本数据集中最常见的两种户型。
+
+2.样本房屋面积集中于100㎡左右。
+
+## 统计二手房所在地区的分布情况
+
+```{r}
+## 计算房屋所在地区的频数分布
+(a = table(lj$property_region))
+
+## 绘制柱形图对房屋所在地区进行展示和解读
+a = a[order(a,decreasing = T)]
+ b <- head(a,n=10)
+barplot(b, names.arg = names(b), col = c("#228B22","#00C957","#BDFCC9","#2E8B57"), xlab = "房屋所在地区", ylab = "房屋数", cex = 0.8, cex.axis = 1, main = "房屋所在地区直方图",family = "Songti SC", cex.lab = 1)
+
+```
+发现：样本中的房屋位置大多在三环外，远离市中心的位置。
+
+## 房屋总价的数值描述与图形
+
+```{r}
+lj %>% 
+  summarise(lj$price_ttl)
+hist(lj$price_ttl,breaks = 70,main = "房屋总价的直方图", ylab="房屋套数(套)", xlab="房屋总价(万元)",family = "Songti SC", cex.lab = 1)
+```
+```{r}
+## 绘制房屋总价的箱型图
+boxplot(lj$price_ttl, data = lj,xlab = "房屋总价", ylab = "频数", col = "#32CD99", main = "房屋总价箱型图")
+```
+
+发现：
+
+1.样本集内房屋总价集中于150万-200万的区间
+
+2.样本所在地和户型及面积的情况与总价的分布情况是一致的。
+
+## 房屋单价的数值描述与图形
+```{r}
+lj %>% 
+  summarise(lj$price_sqm)
+hist(lj$price_sqm,breaks = 70,main = "房屋单价的直方图", ylab="房屋套数(套)", xlab="房屋单价(元/㎡)",family = "Songti SC", cex.lab = 1)
+```
+```{r}
+## 绘制房屋单价的箱型图
+boxplot(lj$price_sqm, data = lj, xlab = "房屋单价", ylab = "频数", col = "#32CD99", main = "房屋单价箱型图")
+```
+
+
+发现：样本集内房屋单价集中于1万/㎡-2万/㎡的区间。
+
+## 影响房屋单价的主要因素是什么？
+```{r}
+#找出单价最高的10套二手房
+lj %>% 
+  arrange(desc(price_sqm)) %>% 
+  slice_max(price_sqm, n = 10)
+```
+```{r}
+#找出单价最低的10套二手房
+lj %>% 
+  arrange(desc(price_sqm)) %>% 
+  slice_min(price_sqm, n = 10)
+```
+
+
+通过对比，可以发现：
+
+-   1.单价高的房屋地段集中于市中心，多为三室以上的大户型、精装修。
+-   2.反之，单价低的房屋地段位于偏远地段，面积较小。
+
+## 邻近地铁这个因素是否对房价有影响？
+```{r}
+## 计算房屋是否邻近地铁的频数分布
+  data(lj$near_subway)
+
+## tapply计算是否邻近地铁的房屋单价均价的平均水平
+(b = tapply(lj$price_sqm,lj$near_subway=="近地铁", mean))
+
+## 绘制柱形图对房屋是否邻近地铁进行展示和解读
+barplot(b, col = c("#228B22","#00C957"), space = 1, xlab = "房屋是否临近地铁", ylab = "频数", horiz = TRUE, main = "样本房屋是否临近地铁直方图", xlim = c(0,30000))
+
+```
+
+发现：邻近地铁的因素在本样本集中对房屋单价有一定影响，但影响程度大小有待进一步量化分析。
+
+## 卧室数量这个因素是否对房价有影响？
+
+```{r}
+## 计算房屋内部卧室数的频数分布
+table(lj$bedrooms)
+
+## tapply计算房屋内部卧室数-月租金的平均水平
+(c = tapply(lj$price_sqm, lj$bedrooms,mean))
+
+## 绘制箱型图对房屋内部卧室数进行展示和解读
+bymedian = with(lj, reorder(bedrooms, price_sqm, median))
+boxplot(price_sqm ~ bymedian, data = lj, par(las="1"), reorder(lj$bedrooms, lj$price_sqm, FUN = median), varwidth=TRUE, xlab = "房屋卧室数", ylab = "频数",  col = "#32CD99", main = "房屋卧室数-房屋单价箱型图")
+
+```
+
+发现：四居室、五居室房屋明显单价较二居室、三居室房屋高。因前者多为大面积、高质量房屋，此结论也符合常识。
+
+--------------------------------------------------------------------
+
+
+# 发现总结
+
+​       经由分析发现，房屋所在地段是影响房屋单价的主要因素，邻近地铁的房屋单价会略高于不邻近地铁的房屋，四居室、五居室房屋单价较高。
+
+​        总体而论，地段好、出行方便、房型好、面积大的房屋更宜居，单价也更昂贵。
